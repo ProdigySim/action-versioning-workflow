@@ -1,0 +1,6 @@
+# Action Versioning System:
+# Increment version here to release new major/minor versions of your action.
+# Patch versions will be automatically incremented
+# The value in this file will be read by action_versioning.yml to determine the git tags to publish.
+
+1.0

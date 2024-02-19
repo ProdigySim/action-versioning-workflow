@@ -1,0 +1,92 @@
+name: Action Versioning
+
+
+on:
+  workflow_call:
+
+jobs:
+  versioning:
+    name: Release New Version (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+        
+      - name: Read current version
+        id: current_version
+        run: |
+          RC_VERSION=$(grep -o '^[^#]*' version.rc)
+          MAJOR=$(echo "$RC_VERSION" | cut -d '.' -f 1)
+          MINOR=$(echo "$RC_VERSION" | cut -d '.' -f 2)
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+      - name: Get highest published version
+        id: highest_version
+        run: |
+          git fetch --tags
+          # Get latest tag matching vX.Y.Z, and strip the `v` prefix
+          # Default to v0.0.0 if no tag is found
+          TAG=$((git describe --tags --match "v*.*.*" --abbrev=0 2>/dev/null || echo "v0.0.0") | sed -E 's/^v//')
+          echo "previous tag: $TAG"
+          MAJOR=$(echo $TAG | cut -d '.' -f 1)
+          MINOR=$(echo $TAG | cut -d '.' -f 2)
+          PATCH=$(echo $TAG | cut -d '.' -f 3)
+          echo "parseD: $MAJOR.$MINOR.$PATCH"
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+      - name: Validate new version
+        id: validate_version
+        run: |
+          # Check that semver of current version is stricly GTE last version
+          LAST_MAJOR="${{ steps.highest_version.outputs.major }}"
+          LAST_MINOR="${{ steps.highest_version.outputs.minor }}"
+          LAST_PATCH="${{ steps.highest_version.outputs.patch }}"
+          NEW_MAJOR="${{ steps.current_version.outputs.major }}"
+          NEW_MINOR="${{ steps.current_version.outputs.minor }}"
+          echo "Checking that desired verison is GTE previous published version"
+          echo "Is $NEW_MAJOR.$NEW_MINOR >= $LAST_MAJOR.$LAST_MINOR"
+          if [[ "$NEW_MAJOR" -lt "$LAST_MAJOR" \
+            || ("$NEW_MAJOR" -eq "$LAST_MAJOR" && "$NEW_MINOR" -lt "$LAST_MINOR" ) \
+          ]]; then
+            echo "Current version is not greater than or equal to the previous published version"
+            exit 1
+          else
+          echo "Current version is valid"
+          fi
+      - name: Configure Git
+        run: |
+          # Read the author of the HEAD commit and imitate them
+          AUTHOR_NAME=$(git show -s --format='%an' HEAD)
+          AUTHOR_EMAIL=$(git show -s --format='%ae' HEAD)
+          git config --global user.email "$AUTHOR_EMAIL"
+          git config --global user.name "$AUTHOR_NAME"
+      - name: Publish new version
+        id: publish_version
+        run: |
+          LAST_MAJOR="${{ steps.highest_version.outputs.major }}"
+          LAST_MINOR="${{ steps.highest_version.outputs.minor }}"
+          LAST_PATCH="${{ steps.highest_version.outputs.patch }}"
+          NEW_MAJOR="${{ steps.current_version.outputs.major }}"
+          NEW_MINOR="${{ steps.current_version.outputs.minor }}"
+          if [[ "$NEW_MAJOR" != "$LAST_MAJOR" || "$NEW_MINOR" != "$LAST_MINOR" ]]; then
+            # If major or minor version have changed, publish v$MAJOR.$MINOR.0
+            echo "Publishing v$NEW_MAJOR.$NEW_MINOR.0"
+            git tag "v$NEW_MAJOR.$NEW_MINOR.0" -a -m "Version $NEW_MAJOR.$NEW_MINOR.0"
+          else
+            NEW_PATCH=$(expr "$LAST_PATCH" + 1)
+            echo "Publishing v$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
+            git tag "v$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH" -a -m "Version $NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
+          fi
+          git tag "v$NEW_MAJOR.$NEW_MINOR" -a -m "Version $NEW_MAJOR.$NEW_MINOR" -f
+          git tag "v$NEW_MAJOR" -a -m "Version $NEW_MAJOR" -f
+          
+      - name: Push tags
+        run: |
+          git push origin --tags --force
